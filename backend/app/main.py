@@ -3,6 +3,7 @@ from typing import Literal
 
 import xgboost as xgb
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.predict import (
@@ -18,6 +19,16 @@ from app.predict import (
 
 
 app = FastAPI(title="JalurAI API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 
 class ShipmentInput(BaseModel):

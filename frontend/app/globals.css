@@ -1,0 +1,33 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist Mono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-serif: serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #f8fafc;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f8fafc;
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
