@@ -6,6 +6,7 @@ node_modules/
 .next/
 dist/
 coverage/
+.pytest_cache/
 *.log
 PRD.md
 JalurAI_Proposal.pdf
