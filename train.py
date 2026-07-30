@@ -25,8 +25,6 @@ FEATURE_COLUMNS = [
     "base_shipping_cost_rp",
     "cost_value_ratio",
     "dist_per_kg",
-    "extra_cost_amount_rp",
-    "extra_cost_pct",
     "jawa_origin",
     "jawa_dest",
     "cross_island",
@@ -77,6 +75,7 @@ def main():
         regression_targets,
         test_size=0.2,
         random_state=42,
+        stratify=classification_targets,
     )
 
     scaler = StandardScaler()

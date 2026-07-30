@@ -118,8 +118,6 @@ def build_feature_vector(shipment: Any) -> dict[str, float]:
         "base_shipping_cost_rp": base_shipping_cost,
         "cost_value_ratio": round(cost_value_ratio, 4),
         "dist_per_kg": round(dist_per_kg, 2),
-        "extra_cost_amount_rp": 0.0,
-        "extra_cost_pct": 0.0,
         "jawa_origin": jawa_origin,
         "jawa_dest": jawa_dest,
         "cross_island": cross_island,
