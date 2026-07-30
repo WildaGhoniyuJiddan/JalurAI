@@ -132,9 +132,26 @@ def predict(shipment: ShipmentInput) -> PredictionResponse:
             estimated_extra_cost = 0.0
             delay_days = 0.0
 
-        narrative, action = resolve_with_llm(
-            risk_score, shap_top3, delay_days
-        )
+        try:
+            narrative, action = resolve_with_llm(
+                risk_score=risk_score,
+                shap_features=shap_top3,
+                delay_days=delay_days,
+                extra_cost_amount=estimated_extra_cost,
+                origin_city=shipment.origin_city,
+                dest_city=shipment.dest_city,
+                distance_km=shipment.distance_km,
+                carrier_type=shipment.carrier_type,
+                armada_type=shipment.armada_type,
+            )
+        except Exception:
+            narrative = (
+                "Resolver Agent tidak tersedia. Menggunakan fallback."
+            )
+            action = (
+                "Periksa koneksi Ollama dan pastikan model llama3.2 "
+                "sudah diunduh."
+            )
 
         return PredictionResponse(
             risk_score=round(risk_score, 4),

@@ -17,6 +17,14 @@ if os.name == "nt":
 import shap
 import xgboost as xgb
 
+try:
+    import ollama
+
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    ollama = None
+    OLLAMA_AVAILABLE = False
+
 
 MODEL_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "models")
@@ -60,6 +68,58 @@ FEATURE_COLUMNS = metadata.get("feature_columns", [])
 LABEL_ENCODER_CLASSES = metadata.get("label_encoder_classes", {})
 SCALER_MEAN = metadata.get("scaler_mean", [])
 SCALER_STD = metadata.get("scaler_std", [])
+
+RESOLVER_SYSTEM_PROMPT = """
+Kamu adalah Resolver Agent untuk sistem prediksi risiko pengiriman logistik
+JalurAI. Tugasmu menerima data prediksi dan menghasilkan narasi penjelasan
+serta rekomendasi tindakan dalam Bahasa Indonesia.
+
+Input yang kamu terima dalam JSON:
+- risk_score: skor risiko model XGBoost antara 0 dan 1
+- risk_category: "Normal" atau "Risiko Tinggi"
+- shap_features: tiga faktor risiko teratas dari SHAP
+- estimated_extra_cost: estimasi kelebihan biaya dalam Rupiah
+- estimated_delay_days: estimasi keterlambatan dalam hari
+- origin_city dan dest_city: kota asal dan tujuan
+- distance_km: jarak pengiriman dalam kilometer
+- carrier_type: jenis ekspedisi
+- armada_type: truk, kapal_laut, pesawat, atau motor
+
+Tugasmu:
+1. Jelaskan hasil prediksi dengan bahasa sederhana untuk staf gudang.
+2. Berikan rekomendasi spesifik yang dapat langsung dilakukan.
+3. Untuk risiko tinggi, rekomendasi harus berupa tindakan konkret.
+4. Untuk risiko normal, tetap berikan saran optimasi yang relevan.
+5. Jangan membuat angka, rute, ekspedisi, atau kondisi baru yang tidak ada
+   pada input.
+
+Kembalikan JSON valid saja tanpa teks tambahan:
+{
+  "resolution_narrative": "<narasi Bahasa Indonesia>",
+  "recommended_action": "<rekomendasi tindakan spesifik>",
+  "confidence": "<tinggi|sedang|rendah>",
+  "reasoning": "<alasan singkat>"
+}
+"""
+
+RESOLVER_RESPONSE_FORMAT = {
+    "type": "object",
+    "properties": {
+        "resolution_narrative": {"type": "string"},
+        "recommended_action": {"type": "string"},
+        "confidence": {
+            "type": "string",
+            "enum": ["tinggi", "sedang", "rendah"],
+        },
+        "reasoning": {"type": "string"},
+    },
+    "required": [
+        "resolution_narrative",
+        "recommended_action",
+        "confidence",
+        "reasoning",
+    ],
+}
 
 
 def encode_armada(armada: str) -> int:
@@ -129,8 +189,75 @@ def resolve_with_llm(
     risk_score: float,
     shap_features: list[dict[str, str | float]],
     delay_days: float,
+    extra_cost_amount: float = 0.0,
+    origin_city: str = "",
+    dest_city: str = "",
+    distance_km: float = 0.0,
+    carrier_type: str = "",
+    armada_type: str = "",
 ) -> tuple[str, str]:
-    """Deterministic Resolver Agent used by the MVP."""
+    """Resolve a prediction through local Ollama with a safe fallback."""
+    risk_category = (
+        "Risiko Tinggi" if risk_score >= 0.5 else "Normal"
+    )
+    payload = {
+        "risk_score": risk_score,
+        "risk_category": risk_category,
+        "shap_features": shap_features,
+        "estimated_extra_cost": extra_cost_amount,
+        "estimated_delay_days": delay_days,
+        "origin_city": origin_city,
+        "dest_city": dest_city,
+        "distance_km": distance_km,
+        "carrier_type": carrier_type,
+        "armada_type": armada_type,
+    }
+
+    if OLLAMA_AVAILABLE and ollama is not None:
+        try:
+            response = ollama.generate(
+                model="llama3.2",
+                prompt=(
+                    "Analisis data prediksi logistik berikut dan "
+                    "kembalikan JSON sesuai format yang diminta:\n\n"
+                    f"{json.dumps(payload, ensure_ascii=False)}"
+                ),
+                system=RESOLVER_SYSTEM_PROMPT.strip(),
+                options={"temperature": 0.3, "num_predict": 500},
+                format=RESOLVER_RESPONSE_FORMAT,
+            )
+            result_text = (
+                response.get("response", "")
+                if isinstance(response, dict)
+                else getattr(response, "response", "")
+            )
+            json_start = result_text.find("{")
+            json_end = result_text.rfind("}") + 1
+            if json_start >= 0 and json_end > json_start:
+                result = json.loads(result_text[json_start:json_end])
+                narrative = result.get("resolution_narrative")
+                action = result.get("recommended_action")
+                if (
+                    isinstance(narrative, str)
+                    and narrative.strip()
+                    and isinstance(action, str)
+                    and action.strip()
+                ):
+                    return narrative.strip(), action.strip()
+        except Exception:
+            pass
+
+    return _resolve_with_llm_stub(
+        risk_score, shap_features, delay_days
+    )
+
+
+def _resolve_with_llm_stub(
+    risk_score: float,
+    shap_features: list[dict[str, str | float]],
+    delay_days: float,
+) -> tuple[str, str]:
+    """Deterministic fallback when Ollama cannot resolve a prediction."""
     top_features = sorted(
         shap_features,
         key=lambda item: abs(float(item["impact"])),
