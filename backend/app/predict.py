@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 if os.name == "nt":
@@ -26,22 +27,27 @@ except ImportError:
     OLLAMA_AVAILABLE = False
 
 
-MODEL_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "models")
-)
-CLASSIFIER_PATH = os.path.join(MODEL_DIR, "xgb_classifier.json")
-REGRESSOR_PATH = os.path.join(MODEL_DIR, "xgb_regressor.json")
-METADATA_PATH = os.path.join(MODEL_DIR, "metadata.json")
+MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
+CLASSIFIER_PATH = MODEL_DIR / "xgb_classifier.json"
+DELAY_REGRESSOR_PATH = MODEL_DIR / "xgb_delay_regressor.json"
+COST_REGRESSOR_PATH = MODEL_DIR / "xgb_cost_regressor.json"
+METADATA_PATH = MODEL_DIR / "metadata.json"
 
 classifier: xgb.XGBClassifier | None = None
-regressor: xgb.XGBRegressor | None = None
+delay_regressor: xgb.XGBRegressor | None = None
+cost_regressor: xgb.XGBRegressor | None = None
 explainer: Any = None
 metadata: dict[str, Any] = {}
 MODEL_LOAD_ERROR: str | None = None
 
-required_artifacts = [CLASSIFIER_PATH, REGRESSOR_PATH, METADATA_PATH]
+required_artifacts = [
+    CLASSIFIER_PATH,
+    DELAY_REGRESSOR_PATH,
+    COST_REGRESSOR_PATH,
+    METADATA_PATH,
+]
 missing_artifacts = [
-    path for path in required_artifacts if not os.path.isfile(path)
+    str(path) for path in required_artifacts if not path.is_file()
 ]
 
 if missing_artifacts:
@@ -51,12 +57,15 @@ if missing_artifacts:
 else:
     try:
         classifier = xgb.XGBClassifier()
-        classifier.load_model(CLASSIFIER_PATH)
+        classifier.load_model(str(CLASSIFIER_PATH))
 
-        regressor = xgb.XGBRegressor()
-        regressor.load_model(REGRESSOR_PATH)
+        delay_regressor = xgb.XGBRegressor()
+        delay_regressor.load_model(str(DELAY_REGRESSOR_PATH))
 
-        with open(METADATA_PATH, "r", encoding="utf-8") as metadata_file:
+        cost_regressor = xgb.XGBRegressor()
+        cost_regressor.load_model(str(COST_REGRESSOR_PATH))
+
+        with METADATA_PATH.open("r", encoding="utf-8") as metadata_file:
             metadata = json.load(metadata_file)
 
         explainer = shap.TreeExplainer(classifier)
@@ -65,9 +74,30 @@ else:
 
 
 FEATURE_COLUMNS = metadata.get("feature_columns", [])
-LABEL_ENCODER_CLASSES = metadata.get("label_encoder_classes", {})
+CATEGORICAL_MAPPINGS = metadata.get("categorical_mappings", {})
 SCALER_MEAN = metadata.get("scaler_mean", [])
 SCALER_STD = metadata.get("scaler_std", [])
+
+OUTER_JAWA_CITIES = {
+    "medan",
+    "palembang",
+    "makassar",
+    "banjarmasin",
+    "pontianak",
+    "manado",
+    "padang",
+    "pekanbaru",
+    "jambi",
+    "bengkulu",
+    "lampung",
+    "balikpapan",
+    "samarinda",
+    "ternate",
+    "ambon",
+    "mataram",
+    "kupang",
+    "papua",
+}
 
 RESOLVER_SYSTEM_PROMPT = """
 Kamu adalah Resolver Agent untuk sistem prediksi risiko pengiriman logistik
@@ -75,23 +105,22 @@ JalurAI. Tugasmu menerima data prediksi dan menghasilkan narasi penjelasan
 serta rekomendasi tindakan dalam Bahasa Indonesia.
 
 Input yang kamu terima dalam JSON:
-- risk_score: skor risiko model XGBoost antara 0 dan 1
-- risk_category: "Normal" atau "Risiko Tinggi"
+- risk_score: skor risiko gabungan model XGBoost antara 0 dan 1
+- risk_category: "Risiko Tinggi" atau "Normal"
 - shap_features: tiga faktor risiko teratas dari SHAP
 - estimated_extra_cost: estimasi kelebihan biaya dalam Rupiah
 - estimated_delay_days: estimasi keterlambatan dalam hari
 - origin_city dan dest_city: kota asal dan tujuan
 - distance_km: jarak pengiriman dalam kilometer
-- carrier_type: jenis ekspedisi
-- armada_type: truk, kapal_laut, pesawat, atau motor
+- tier_layanan: tier layanan pengiriman
+- kurir: kurir yang dipilih
 
 Tugasmu:
 1. Jelaskan hasil prediksi dengan bahasa sederhana untuk staf gudang.
 2. Berikan rekomendasi spesifik yang dapat langsung dilakukan.
 3. Untuk risiko tinggi, rekomendasi harus berupa tindakan konkret.
 4. Untuk risiko normal, tetap berikan saran optimasi yang relevan.
-5. Jangan membuat angka, rute, ekspedisi, atau kondisi baru yang tidak ada
-   pada input.
+5. Jangan membuat angka, rute, kurir, atau kondisi baru yang tidak ada pada input.
 
 Kembalikan JSON valid saja tanpa teks tambahan:
 {
@@ -122,11 +151,20 @@ RESOLVER_RESPONSE_FORMAT = {
 }
 
 
-def encode_armada(armada: str) -> int:
-    mapping = LABEL_ENCODER_CLASSES
-    if isinstance(mapping.get("armada_type"), dict):
-        mapping = mapping["armada_type"]
-    return int(mapping.get(armada, 0))
+def encode_category(field: str, value: str) -> int:
+    mapping = CATEGORICAL_MAPPINGS.get(field, {})
+    if value in mapping:
+        return int(mapping[value])
+    fallback = mapping.get("LAINNYA", 0)
+    return int(fallback)
+
+
+def is_outer_jawa(shipment: Any) -> int:
+    island = str(getattr(shipment, "dest_island", "") or "").upper()
+    if island:
+        return int(island != "JAWA")
+    destination = str(getattr(shipment, "dest_city", "")).lower()
+    return int(destination in OUTER_JAWA_CITIES)
 
 
 def scale_features(raw: dict[str, float]) -> list[float]:
@@ -146,42 +184,26 @@ def scale_features(raw: dict[str, float]) -> list[float]:
 
 
 def build_feature_vector(shipment: Any) -> dict[str, float]:
-    """Build raw features in the same order and shape used during training."""
-    java_cities = {
-        "jakarta",
-        "bandung",
-        "surabaya",
-        "semarang",
-        "yogyakarta",
-        "solo",
-        "malang",
-        "blitar",
-        "tangerang",
-        "bekasi",
-        "depok",
-        "bogor",
-    }
-    jawa_origin = int(shipment.origin_city.lower() in java_cities)
-    jawa_dest = int(shipment.dest_city.lower() in java_cities)
-    cross_island = int(jawa_origin != jawa_dest)
-    base_shipping_cost = round(shipment.distance_km * 2000, 0)
-    cost_value_ratio = base_shipping_cost / max(
-        shipment.value_of_goods, 10000
-    )
-    dist_per_kg = shipment.distance_km / max(shipment.weight, 0.1)
+    """Build the same pre-dispatch features used by ``file/train.py``."""
+    weight = max(float(shipment.weight), 0.01)
+    shipping_cost = shipment.estimated_shipping_cost
+    if shipping_cost is None:
+        shipping_cost = shipment.distance_km * 2000
 
     return {
-        "weight_kg": shipment.weight,
-        "volume_m3": shipment.volume,
-        "value_goods_rp": shipment.value_of_goods,
-        "distance_km": shipment.distance_km,
-        "base_shipping_cost_rp": base_shipping_cost,
-        "cost_value_ratio": round(cost_value_ratio, 4),
-        "dist_per_kg": round(dist_per_kg, 2),
-        "jawa_origin": jawa_origin,
-        "jawa_dest": jawa_dest,
-        "cross_island": cross_island,
-        "armada_type": encode_armada(shipment.armada_type),
+        "weight_kg": weight,
+        "qty": max(float(shipment.qty), 1.0),
+        "jumlah_kategori": max(float(shipment.jumlah_kategori), 1.0),
+        "berat_2_4kg": float(2 <= weight < 4),
+        "luar_jawa": float(is_outer_jawa(shipment)),
+        "nilai_barang_idr": max(float(shipment.value_of_goods), 0.0),
+        "jarak_tempuh_km": max(float(shipment.distance_km), 0.0),
+        "ongkir_per_kg": max(float(shipping_cost), 0.0) / weight,
+        "rasio_jarak_per_kg": max(float(shipment.distance_km), 0.0) / weight,
+        "tier_layanan": float(
+            encode_category("tier_layanan", shipment.tier_layanan)
+        ),
+        "kurir": float(encode_category("kurir", shipment.kurir)),
     }
 
 
@@ -193,13 +215,11 @@ def resolve_with_llm(
     origin_city: str = "",
     dest_city: str = "",
     distance_km: float = 0.0,
-    carrier_type: str = "",
-    armada_type: str = "",
+    tier_layanan: str = "",
+    kurir: str = "",
 ) -> tuple[str, str]:
     """Resolve a prediction through local Ollama with a safe fallback."""
-    risk_category = (
-        "Risiko Tinggi" if risk_score >= 0.5 else "Normal"
-    )
+    risk_category = "Risiko Tinggi" if risk_score >= 0.5 else "Normal"
     payload = {
         "risk_score": risk_score,
         "risk_category": risk_category,
@@ -209,8 +229,8 @@ def resolve_with_llm(
         "origin_city": origin_city,
         "dest_city": dest_city,
         "distance_km": distance_km,
-        "carrier_type": carrier_type,
-        "armada_type": armada_type,
+        "tier_layanan": tier_layanan,
+        "kurir": kurir,
     }
 
     if OLLAMA_AVAILABLE and ollama is not None:
@@ -218,8 +238,8 @@ def resolve_with_llm(
             response = ollama.generate(
                 model="llama3.2",
                 prompt=(
-                    "Analisis data prediksi logistik berikut dan "
-                    "kembalikan JSON sesuai format yang diminta:\n\n"
+                    "Analisis data prediksi logistik berikut dan kembalikan "
+                    "JSON sesuai format yang diminta:\n\n"
                     f"{json.dumps(payload, ensure_ascii=False)}"
                 ),
                 system=RESOLVER_SYSTEM_PROMPT.strip(),
@@ -247,9 +267,7 @@ def resolve_with_llm(
         except Exception:
             pass
 
-    return _resolve_with_llm_stub(
-        risk_score, shap_features, delay_days
-    )
+    return _resolve_with_llm_stub(risk_score, shap_features, delay_days)
 
 
 def _resolve_with_llm_stub(
@@ -271,24 +289,17 @@ def _resolve_with_llm_stub(
 
     if risk_score >= 0.5:
         narrative = (
-            f"Pesanan ini dikategorikan berisiko tinggi "
-            f"(skor {risk_score:.2f}). Faktor utama yang berkontribusi "
-            f"adalah {primary['feature']} "
+            f"Pesanan ini dikategorikan berisiko tinggi (skor {risk_score:.2f}). "
+            f"Faktor utama adalah {primary['feature']} "
             f"(dampak: {float(primary['impact']):+.4f}). "
-            f"Estimasi keterlambatan {delay_days:.1f} hari dengan "
-            "potensi kelebihan biaya signifikan."
+            f"Estimasi keterlambatan {delay_days:.1f} hari."
         )
-        action = (
-            "Evaluasi armada atau ekspedisi alternatif sebelum diproses."
-        )
+        action = "Evaluasi ulang tier layanan atau kurir sebelum diproses."
     else:
         narrative = (
-            f"Pesanan berada dalam rentang risiko normal "
-            f"(skor {risk_score:.2f}). Faktor dominan: "
-            f"{primary['feature']} "
-            f"(dampak: {float(primary['impact']):+.4f}). "
-            "Tidak ada indikasi keterlambatan atau kelebihan biaya "
-            "yang signifikan."
+            f"Pesanan berada dalam rentang risiko normal (skor {risk_score:.2f}). "
+            f"Faktor dominan: {primary['feature']} "
+            f"(dampak: {float(primary['impact']):+.4f})."
         )
         action = "Lanjutkan proses pengiriman sesuai prosedur normal."
 

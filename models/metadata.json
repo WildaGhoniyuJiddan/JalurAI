@@ -1,52 +1,77 @@
 {
+  "dataset": "jalurai_orders.csv",
+  "source_rows": 20848,
+  "training_rows": 18018,
   "feature_columns": [
     "weight_kg",
-    "volume_m3",
-    "value_goods_rp",
-    "distance_km",
-    "base_shipping_cost_rp",
-    "cost_value_ratio",
-    "dist_per_kg",
-    "jawa_origin",
-    "jawa_dest",
-    "cross_island",
-    "armada_type"
+    "qty",
+    "jumlah_kategori",
+    "berat_2_4kg",
+    "luar_jawa",
+    "nilai_barang_idr",
+    "jarak_tempuh_km",
+    "ongkir_per_kg",
+    "rasio_jarak_per_kg",
+    "tier_layanan",
+    "kurir"
   ],
-  "label_encoder_classes": {
-    "truk": 0,
-    "kapal_laut": 1,
-    "pesawat": 2,
-    "motor": 3
+  "categorical_mappings": {
+    "tier_layanan": {
+      "Instan": 0,
+      "Same Day": 1,
+      "Next Day": 2,
+      "Reguler": 3,
+      "Hemat": 4,
+      "Kargo": 5
+    },
+    "kurir": {
+      "SPX": 0,
+      "JNE": 1,
+      "J&T": 2,
+      "GOSEND": 3,
+      "GRAB": 4,
+      "LAINNYA": 5
+    }
   },
   "scaler_mean": [
-    3.634572499999987,
-    1.623617100000004,
-    417512.43525,
-    1158.9337749999997,
-    2317868.62475,
-    8.466762049999998,
-    458.6735049999999,
-    0.42025,
-    0.42,
-    0.49575,
-    1.502
+    1.9363712362981065,
+    2.483280144304149,
+    1.1128763701956432,
+    0.10753434161232135,
+    0.19585125572360204,
+    53842.90731233523,
+    288.8661268936665,
+    34800.191302582134,
+    740.3757464809318,
+    3.5934508117108366,
+    0.1033717219370057
   ],
   "scaler_std": [
-    2.383655085628737,
-    1.0954278867331213,
-    299720.528014589,
-    640.4278524562691,
-    1280855.5637688297,
-    8.194079594247295,
-    423.43772801884916,
-    0.49359896424121225,
-    0.4935585071701155,
-    0.49998193717375033,
-    1.1244981102696416
+    6.26042941922869,
+    7.214216489569858,
+    0.483482561034833,
+    0.3097913926924807,
+    0.39685455944849274,
+    146896.73255357886,
+    397.7482943566173,
+    52928.13013825055,
+    1662.1423754772154,
+    0.809597185941505,
+    0.42942100075208767
   ],
-  "classifier_auc_roc": 0.860511484586753,
-  "regressor_r2": 0.8601670861244202,
-  "train_samples": 4000,
-  "test_samples": 1000,
-  "generated_at": "2026-07-30T04:01:52.153770+00:00"
+  "targets": {
+    "classifier": "label_telat OR label_kelebihan_biaya",
+    "delay_regressor": "hari_keterlambatan where label_telat=1",
+    "cost_regressor": "nilai_kelebihan_biaya_idr where label_kelebihan_biaya=1"
+  },
+  "metrics": {
+    "classifier_auc_roc": 0.617900929056127,
+    "delay_mae_days": 0.8724204301834106,
+    "delay_r2": 0.05220609903335571,
+    "cost_mae_idr": 901.046875,
+    "cost_r2": 0.7799652814865112
+  },
+  "train_samples": 14414,
+  "test_samples": 3604,
+  "generated_at": "2026-08-06T08:05:50.394436+00:00"
 }

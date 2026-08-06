@@ -11,14 +11,15 @@ from app.predict import (
     MODEL_LOAD_ERROR,
     build_feature_vector,
     classifier,
+    cost_regressor,
+    delay_regressor,
     explainer,
-    regressor,
     resolve_with_llm,
     scale_features,
 )
 
 
-app = FastAPI(title="JalurAI API", version="0.1.0")
+app = FastAPI(title="JalurAI API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -34,12 +35,15 @@ app.add_middleware(
 class ShipmentInput(BaseModel):
     origin_city: str
     dest_city: str
+    dest_island: str = "JAWA"
     weight: float = Field(gt=0)
-    volume: float = Field(gt=0)
     value_of_goods: float = Field(ge=0)
     distance_km: float = Field(ge=0)
-    carrier_type: str
-    armada_type: str = "truk"
+    estimated_shipping_cost: float | None = Field(default=None, ge=0)
+    qty: int = Field(default=1, ge=1)
+    jumlah_kategori: int = Field(default=1, ge=1)
+    tier_layanan: str = "Reguler"
+    kurir: str = "SPX"
 
 
 class ShapFeature(BaseModel):
@@ -69,7 +73,8 @@ def predict(shipment: ShipmentInput) -> PredictionResponse:
     if (
         MODEL_LOAD_ERROR
         or classifier is None
-        or regressor is None
+        or delay_regressor is None
+        or cost_regressor is None
         or explainer is None
     ):
         raise HTTPException(
@@ -86,9 +91,7 @@ def predict(shipment: ShipmentInput) -> PredictionResponse:
         # DMatrix is retained for TreeExplainer below.
         probability = classifier.predict_proba([scaled])[0]
         risk_score = float(probability[1])
-        risk_category = (
-            "Risiko Tinggi" if risk_score >= 0.5 else "Normal"
-        )
+        risk_category = "Risiko Tinggi" if risk_score >= 0.5 else "Normal"
 
         shap_values = explainer.shap_values(feature_matrix)
         if isinstance(shap_values, list):
@@ -118,16 +121,12 @@ def predict(shipment: ShipmentInput) -> PredictionResponse:
         ]
 
         if risk_category == "Risiko Tinggi":
-            extra_cost_pct = max(
-                float(regressor.predict([scaled])[0]), 0.0
+            estimated_extra_cost = max(
+                float(cost_regressor.predict([scaled])[0]), 0.0
             )
-            estimated_extra_cost = round(
-                raw_features["base_shipping_cost_rp"]
-                * extra_cost_pct
-                / 100,
-                2,
+            delay_days = max(
+                float(delay_regressor.predict([scaled])[0]), 0.0
             )
-            delay_days = round(extra_cost_pct / 25, 1)
         else:
             estimated_extra_cost = 0.0
             delay_days = 0.0
@@ -141,13 +140,11 @@ def predict(shipment: ShipmentInput) -> PredictionResponse:
                 origin_city=shipment.origin_city,
                 dest_city=shipment.dest_city,
                 distance_km=shipment.distance_km,
-                carrier_type=shipment.carrier_type,
-                armada_type=shipment.armada_type,
+                tier_layanan=shipment.tier_layanan,
+                kurir=shipment.kurir,
             )
         except Exception:
-            narrative = (
-                "Resolver Agent tidak tersedia. Menggunakan fallback."
-            )
+            narrative = "Resolver Agent tidak tersedia. Menggunakan fallback."
             action = (
                 "Periksa koneksi Ollama dan pastikan model llama3.2 "
                 "sudah diunduh."
@@ -156,11 +153,9 @@ def predict(shipment: ShipmentInput) -> PredictionResponse:
         return PredictionResponse(
             risk_score=round(risk_score, 4),
             risk_category=risk_category,
-            estimated_extra_cost=estimated_extra_cost,
-            estimated_delay_days=delay_days,
-            shap_features=[
-                ShapFeature(**feature) for feature in shap_top3
-            ],
+            estimated_extra_cost=round(estimated_extra_cost, 2),
+            estimated_delay_days=round(delay_days, 1),
+            shap_features=[ShapFeature(**feature) for feature in shap_top3],
             resolution_narrative=narrative,
             recommended_action=action,
             created_at=datetime.now(timezone.utc),

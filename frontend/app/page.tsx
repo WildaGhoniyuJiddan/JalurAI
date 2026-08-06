@@ -14,9 +14,11 @@ type FormDataState = {
   origin_city: string;
   dest_city: string;
   weight: string;
-  volume: string;
   value_of_goods: string;
-  armada_type: "truk" | "kapal_laut" | "pesawat" | "motor";
+  estimated_shipping_cost: string;
+  qty: string;
+  tier_layanan: string;
+  kurir: string;
 };
 
 type ShapFeature = {
@@ -46,12 +48,14 @@ type HistoryEntry = {
 
 
 const initialFormData: FormDataState = {
-  origin_city: "",
+  origin_city: "Tangerang",
   dest_city: "",
   weight: "",
-  volume: "",
   value_of_goods: "",
-  armada_type: "truk",
+  estimated_shipping_cost: "",
+  qty: "1",
+  tier_layanan: "Reguler",
+  kurir: "SPX",
 };
 
 const cityCoordinates: Record<string, readonly [number, number]> = {
@@ -88,6 +92,38 @@ const cityCoordinates: Record<string, readonly [number, number]> = {
 };
 
 const cityNames = Object.keys(cityCoordinates);
+const cityIslands: Record<string, string> = {
+  Jakarta: "JAWA",
+  Bandung: "JAWA",
+  Surabaya: "JAWA",
+  Semarang: "JAWA",
+  Yogyakarta: "JAWA",
+  Solo: "JAWA",
+  Malang: "JAWA",
+  Blitar: "JAWA",
+  Tangerang: "JAWA",
+  Bekasi: "JAWA",
+  Depok: "JAWA",
+  Bogor: "JAWA",
+  Medan: "SUMATERA",
+  Palembang: "SUMATERA",
+  Padang: "SUMATERA",
+  Pekanbaru: "SUMATERA",
+  Jambi: "SUMATERA",
+  Bengkulu: "SUMATERA",
+  Lampung: "SUMATERA",
+  Banjarmasin: "KALIMANTAN",
+  Pontianak: "KALIMANTAN",
+  Balikpapan: "KALIMANTAN",
+  Samarinda: "KALIMANTAN",
+  Makassar: "SULAWESI",
+  Manado: "SULAWESI",
+  Ternate: "MALUKU-PAPUA",
+  Ambon: "MALUKU-PAPUA",
+  Mataram: "BALI-NUSA",
+  Kupang: "BALI-NUSA",
+  Papua: "MALUKU-PAPUA",
+};
 const logisticsRouteFactor = 1.25;
 
 const apiBaseUrl =
@@ -213,12 +249,17 @@ export default function DashboardPage() {
         body: JSON.stringify({
           origin_city: formData.origin_city.trim(),
           dest_city: formData.dest_city.trim(),
+          dest_island: cityIslands[formData.dest_city] ?? "LAINNYA",
           weight: Number(formData.weight),
-          volume: Number(formData.volume),
           value_of_goods: Number(formData.value_of_goods),
           distance_km: distanceKm,
-          carrier_type: "Tidak ditentukan",
-          armada_type: formData.armada_type,
+          estimated_shipping_cost: formData.estimated_shipping_cost
+            ? Number(formData.estimated_shipping_cost)
+            : Math.round(distanceKm * 2000),
+          qty: Number(formData.qty),
+          jumlah_kategori: 1,
+          tier_layanan: formData.tier_layanan,
+          kurir: formData.kurir,
         }),
       });
 
@@ -281,7 +322,8 @@ export default function DashboardPage() {
             JalurAI
           </h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Prediksi risiko pengiriman sebelum pesanan diberangkatkan.
+            Prediksi risiko sebelum pesanan diberangkatkan dengan fitur order
+            nyata dan label operasional tersimulasi.
           </p>
         </header>
 
@@ -294,10 +336,10 @@ export default function DashboardPage() {
               id="shipment-form-title"
               className="text-lg font-bold"
             >
-              Detail Pengiriman
+              Detail Pesanan
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Lengkapi data pesanan untuk menghitung risiko.
+              Lengkapi fitur yang tersedia sebelum dispatch untuk menghitung risiko.
             </p>
           </div>
 
@@ -330,14 +372,23 @@ export default function DashboardPage() {
               placeholder="kg"
             />
             <InputField
-              label="Volume"
-              name="volume"
+              label="Kuantitas"
+              name="qty"
               type="number"
-              step="0.01"
-              min="0.01"
-              value={formData.volume}
+              step="1"
+              min="1"
+              value={formData.qty}
               onChange={handleChange}
-              placeholder="m³"
+              placeholder="unit"
+            />
+            <InputField
+              label="Perkiraan ongkir"
+              name="estimated_shipping_cost"
+              type="number"
+              min="0"
+              value={formData.estimated_shipping_cost}
+              onChange={handleChange}
+              placeholder="otomatis bila kosong"
             />
             <InputField
               label="Nilai barang"
@@ -348,20 +399,40 @@ export default function DashboardPage() {
               onChange={handleChange}
               placeholder="Rp"
             />
-            <label className="flex flex-col gap-2 sm:col-span-2">
+            <label className="flex flex-col gap-2">
               <span className="text-sm font-semibold text-slate-700">
-                Jenis armada
+                Tier layanan
               </span>
               <select
                 className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-slate-700 focus:ring-2 focus:ring-slate-200"
-                name="armada_type"
-                value={formData.armada_type}
+                name="tier_layanan"
+                value={formData.tier_layanan}
                 onChange={handleChange}
               >
-                <option value="truk">Truk</option>
-                <option value="kapal_laut">Kapal laut</option>
-                <option value="pesawat">Pesawat</option>
-                <option value="motor">Motor</option>
+                <option value="Instan">Instan</option>
+                <option value="Same Day">Same Day</option>
+                <option value="Next Day">Next Day</option>
+                <option value="Reguler">Reguler</option>
+                <option value="Hemat">Hemat</option>
+                <option value="Kargo">Kargo</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-sm font-semibold text-slate-700">
+                Kurir
+              </span>
+              <select
+                className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-slate-700 focus:ring-2 focus:ring-slate-200"
+                name="kurir"
+                value={formData.kurir}
+                onChange={handleChange}
+              >
+                <option value="SPX">SPX</option>
+                <option value="JNE">JNE</option>
+                <option value="J&T">J&amp;T</option>
+                <option value="GOSEND">GOSEND</option>
+                <option value="GRAB">GRAB</option>
+                <option value="LAINNYA">Lainnya</option>
               </select>
             </label>
 
